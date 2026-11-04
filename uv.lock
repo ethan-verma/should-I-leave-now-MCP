@@ -47,6 +47,26 @@ wheels = [
 ]
 
 [[package]]
+name = "baton-sdk"
+version = "0.9.7"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anyio" },
+    { name = "certifi" },
+    { name = "pydantic" },
+    { name = "urllib3" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/1b/5c/55b0d40b5b034cf5979a0efb7a49dabe08f92de83541863ff1dffbcc24e8/baton_sdk-0.9.7.tar.gz", hash = "sha256:684c9090d3b7c3874cc72f47d199b867ef08eadcc91209cca175d58a2e82bd01", size = 339397, upload-time = "2026-11-04T01:32:48.217Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/65/67/638fd0c2dfbdc935e424555cbe010446bbee7744617ac34d74aa263e4823/baton_sdk-0.9.7-py3-none-any.whl", hash = "sha256:fcb5efe59c90876c51c6a2f0af0210eda0220c87c702a35f690eb347a1b704d6", size = 242596, upload-time = "2026-11-04T01:32:46.744Z" },
+]
+
+[package.optional-dependencies]
+http = [
+    { name = "urllib3" },
+]
+
+[[package]]
 name = "certifi"
 version = "2026.10.23"
 source = { registry = "https://pypi.org/simple" }
@@ -347,6 +367,7 @@ name = "leavenow"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "baton-sdk", extra = ["http"] },
     { name = "httpx" },
     { name = "mcp", extra = ["cli"] },
     { name = "tzdata" },
@@ -360,6 +381,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "baton-sdk", extras = ["http"], specifier = ">=0.9.1" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "mcp", extras = ["cli"], specifier = ">=2.3.0" },
     { name = "tzdata", specifier = ">=2026.6" },
@@ -907,6 +929,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/7a/29/6a1391d31cd00ff9e927215a224a880e1e84e826b64ba80a499e51c074d8/tzdata-2026.6.tar.gz", hash = "sha256:85d2cd9c09f81f0bb29db27759fc83af4f1e620efb814f8c5bf8b4cc4feece6d", size = 201017, upload-time = "2026-10-28T09:57:09.137Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/0a/66/9a06c2227fedfd4919f0eaaa8b94377d9730882a7e4f95823c9a331ab5e1/tzdata-2026.6-py2.py3-none-any.whl", hash = "sha256:0a10eec6e13ef16b627fabed9a5f2ba61a62b1c67f327305f4e7e412a70b4aec", size = 348210, upload-time = "2026-10-28T09:57:07.276Z" },
+]
+
+[[package]]
+name = "urllib3"
+version = "2.8.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/e3/05/b17359e1cefb4f909b5e40b1b90a496d987258916dbbf88e842c729f510e/urllib3-2.8.0.tar.gz", hash = "sha256:63bf2ead4c879426ebf22ef2a781eeb4aa3b4ae798a0435506f8687fd5bb9b63", size = 458972, upload-time = "2026-09-15T19:29:36.253Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/92/9d/c4e665119135114480843e7ab388fa94d8480650450e6f8e26b70d323a4c/urllib3-2.8.0-py3-none-any.whl", hash = "sha256:0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3", size = 135717, upload-time = "2026-09-15T19:29:34.577Z" },
 ]
 
 [[package]]

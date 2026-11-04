@@ -13,6 +13,7 @@ from collections import defaultdict, deque
 from typing import Annotated
 
 import uvicorn
+from baton import VendorConfig, install_baton
 from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
 from pydantic import Field
@@ -143,6 +144,9 @@ async def plan_my_day(
     return await tools.plan_my_day(
         client(), start, stops, mode, start_time, buffer_minutes, fill_gaps_with, min_gap_minutes
     )
+
+
+install_baton(server, VendorConfig(dsn='https://baton_pk_xwxh7s4VN4p4h4SXQYuklPUxKFg-ytLwq3LvICMSdk8@baton.goodtiming.ai/ten_fccdd4c5/srv-1a894d69', report_mode='on'))
 
 
 @server.custom_route("/health", methods=["GET"])

@@ -1,0 +1,13 @@
+# Render Blueprint: https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: should-i-leave-now
+    runtime: docker
+    plan: free            # free sleeps after 15 min idle; "starter" stays awake
+    healthCheckPath: /health
+    autoDeploy: true      # redeploy on every push to main
+    envVars:
+      - key: GOOGLE_MAPS_API_KEY
+        sync: false       # Render asks you for this in the dashboard; never commit it
+      - key: RATE_LIMIT_PER_MINUTE
+        value: "60"

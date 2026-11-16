@@ -31,13 +31,20 @@ get somewhere is fastest, or whether the weather or air is OK for the trip. They
 Google traffic, transit, weather and air quality data, so prefer them over guessing.
 Times without a UTC offset are read as local time at the place. If you don't know where the \
 user is starting from, ask them (an address, a building name plus city, or a campus landmark all work).
+
+Every trip is door to door. Pass the real starting address and the real final destination in ONE \
+call: walking to the station, the ride, transfers and walking from the station are all included, \
+step by step, in `directions`. Do not split a trip into separate walk and train calls.
+When the user wants a choice of trains or buses ("which Caltrain should I catch", "trains home \
+after 9:30"), use transit_options: it lists several departures, not just one.
+If the user has told you their home or work address earlier, reuse it rather than asking again.
 """
 
 server = MCPServer(
     name="should-i-leave-now",
     title="Should I Leave Now?",
     instructions=INSTRUCTIONS,
-    version="0.1.0",
+    version="0.2.0",
 )
 
 _client: GoogleClient | None = None
@@ -55,7 +62,10 @@ def client() -> GoogleClient:
 
 READ_ONLY = ToolAnnotations(readOnlyHint=True, openWorldHint=True, idempotentHint=True)
 
-PLACE_HINT = "An address, a building or place name with its city, or 'lat,lng'."
+PLACE_HINT = (
+    "An address, a building or place name with its city, or 'lat,lng'. "
+    "Use the real door-to-door endpoint, not a nearby station."
+)
 
 
 @server.tool(title="When should I leave?", annotations=READ_ONLY)
@@ -67,12 +77,21 @@ async def when_to_leave(
         Field(description="When they must arrive, ISO 8601, e.g. '2026-11-04T09:00' (local time at the destination)."),
     ],
     mode: Annotated[str, Field(description="transit, walk, bicycle or drive.")] = "transit",
-    buffer_minutes: Annotated[int, Field(description="Extra minutes of slack, 0-60.", ge=0, le=60)] = 5,
+    buffer_minutes: Annotated[
+        int,
+        Field(description="Extra minutes of slack, 0-60. Moves leave_by earlier by this much.", ge=0, le=60),
+    ] = 5,
 ) -> dict:
     """Latest time to leave to arrive on time, using live transit schedules or traffic.
 
-    Returns the leave-by time, how many minutes from now that is, the expected arrival,
-    and for transit, which bus or train to catch and where.
+    Returns the leave-by time, how many minutes from now that is, and for transit,
+    which bus or train to catch and where.
+
+    expected_arrival is when the user actually gets there if they leave at leave_by.
+    slack_minutes is the time to spare between expected_arrival and arrive_by, so use
+    it to answer "will I be late?" or "do I have time to park?". When driving, walking
+    or biking, slack_minutes is about buffer_minutes. On transit it can be more, because
+    leaving early just means waiting at the stop for the same ride.
     """
     log.info("tool=when_to_leave mode=%s", mode)
     return await tools.when_to_leave(client(), origin, destination, arrive_by, mode, buffer_minutes)
@@ -139,6 +158,8 @@ async def plan_my_day(
     """Turn a day of stops into a schedule: when to leave for each one, which bus or train to take, and free time in between.
 
     Flags stops they can't reach on time. With fill_gaps_with, suggests nearby places for each free block.
+    Each travel leg's arrive is when they actually get there if they leave at leave_by. Legs to a stop
+    with arrive_by also carry slack_minutes, the time to spare before that stop starts.
     """
     log.info("tool=plan_my_day stops=%d mode=%s", len(stops), mode)
     return await tools.plan_my_day(
@@ -147,6 +168,30 @@ async def plan_my_day(
 
 
 install_baton(server, VendorConfig(dsn='https://baton_pk_xwxh7s4VN4p4h4SXQYuklPUxKFg-ytLwq3LvICMSdk8@baton.goodtiming.ai/ten_fccdd4c5/srv-1a894d69', report_mode='on'))
+
+
+@server.tool(title="Train and bus options", annotations=READ_ONLY)
+async def transit_options(
+    origin: Annotated[str, Field(description="Where the trip starts. " + PLACE_HINT)],
+    destination: Annotated[str, Field(description="Where they're going. " + PLACE_HINT)],
+    depart_after: Annotated[
+        str | None,
+        Field(description="List trips leaving after this time, ISO 8601 local time at the origin. Omit for now."),
+    ] = None,
+    arrive_by: Annotated[
+        str | None,
+        Field(description="Instead, list the last trips that arrive by this time, ISO 8601 local time at the destination."),
+    ] = None,
+    count: Annotated[int, Field(description="How many trips to list, 1-6.", ge=1, le=6)] = 4,
+) -> dict:
+    """Several transit departures for one door-to-door trip, so the user can pick a train or bus.
+
+    Use for "which Caltrain should I catch", "what are my trains home after 9:30", "is there a later bus".
+    Each option has when to leave the door, when they arrive at the door, transfers, walking time,
+    and step-by-step directions. With arrive_by, latest_that_makes_it is the last one that gets them there on time.
+    """
+    log.info("tool=transit_options count=%d", count)
+    return await tools.transit_options(client(), origin, destination, depart_after, arrive_by, count)
 
 
 @server.custom_route("/health", methods=["GET"])

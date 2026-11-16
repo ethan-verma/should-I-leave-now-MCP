@@ -71,38 +71,61 @@ async def place_tz(client: GoogleClient, address: str) -> tuple[ZoneInfo, str]:
     return ZoneInfo(tz_id), place.address
 
 
+def _ride(td: dict, tz: ZoneInfo) -> dict:
+    line = td.get("transitLine", {})
+    stops = td.get("stopDetails", {})
+    ride = {
+        "do": "ride",
+        "line": line.get("nameShort") or line.get("name"),
+        "vehicle": (line.get("vehicle") or {}).get("type", "TRANSIT").lower(),
+        "toward": td.get("headsign"),
+        "board_at": (stops.get("departureStop") or {}).get("name"),
+        "get_off_at": (stops.get("arrivalStop") or {}).get("name"),
+        "stops": td.get("stopCount"),
+    }
+    if stops.get("departureTime"):
+        ride["departs"] = clock(datetime.fromisoformat(stops["departureTime"]), tz)
+    if stops.get("arrivalTime"):
+        ride["arrives"] = clock(datetime.fromisoformat(stops["arrivalTime"]), tz)
+    return {k: v for k, v in ride.items() if v is not None}
+
+
+def directions(route: dict, tz: ZoneInfo) -> list[dict]:
+    """Door-to-door steps in order: walk to the stop, ride, (transfer), walk to the door."""
+    steps = [s for leg in route.get("legs", []) for s in leg.get("steps", [])]
+    out: list[dict] = []
+    walk_s = 0
+
+    def flush(to: str | None):
+        nonlocal walk_s
+        if walk_s >= 30:
+            out.append({"do": "walk", "minutes": max(1, round(walk_s / 60)), "to": to or "your destination"})
+        walk_s = 0
+
+    for s in steps:
+        td = s.get("transitDetails")
+        if td:
+            flush(((td.get("stopDetails") or {}).get("departureStop") or {}).get("name"))
+            out.append(_ride(td, tz))
+        else:
+            walk_s += seconds(s.get("staticDuration"))
+    flush(None)
+    return out
+
+
 def summarize(route: dict, tz: ZoneInfo) -> dict:
     """Turn a raw Google route into something short Claude can reason about."""
     steps = [s for leg in route.get("legs", []) for s in leg.get("steps", [])]
-    rides = []
-    for s in steps:
-        td = s.get("transitDetails")
-        if not td:
-            continue
-        line = td.get("transitLine", {})
-        stops = td.get("stopDetails", {})
-        ride = {
-            "line": line.get("nameShort") or line.get("name"),
-            "vehicle": (line.get("vehicle") or {}).get("type", "TRANSIT").lower(),
-            "toward": td.get("headsign"),
-            "board_at": (stops.get("departureStop") or {}).get("name"),
-            "get_off_at": (stops.get("arrivalStop") or {}).get("name"),
-            "stops": td.get("stopCount"),
-        }
-        if stops.get("departureTime"):
-            ride["departs"] = clock(datetime.fromisoformat(stops["departureTime"]), tz)
-        if stops.get("arrivalTime"):
-            ride["arrives"] = clock(datetime.fromisoformat(stops["arrivalTime"]), tz)
-        rides.append(ride)
-
     meters = route.get("distanceMeters", 0)
     out = {
-        "minutes": round(seconds(route.get("duration")) / 60),
+        "door_to_door_minutes": round(seconds(route.get("duration")) / 60),
         "miles": round(meters / 1609.34, 1),
         "km": round(meters / 1000, 1),
     }
+    rides = sum(1 for s in steps if s.get("transitDetails"))
     if rides:
-        out["transit"] = rides
+        out["directions"] = directions(route, tz)
+        out["transfers"] = rides - 1
         walk_min = sum(seconds(s.get("staticDuration")) for s in steps if s.get("travelMode") == "WALK") / 60
         out["walking_minutes"] = round(walk_min)
     fare = (route.get("travelAdvisory") or {}).get("transitFare")
@@ -190,6 +213,22 @@ async def depart_at_leg(
     return route, depart, depart + timedelta(seconds=seconds(route.get("duration")))
 
 
+def arrival_with_buffer(route: dict, mode: str, arrive: datetime, buffer: timedelta) -> datetime:
+    """When you actually get there if you leave `buffer` earlier than needed.
+
+    On a transit ride the extra time is spent waiting at the stop, so you arrive with
+    the same bus. Driving, walking or biking, leaving earlier means arriving earlier.
+    """
+    if mode == "TRANSIT" and transit_window(route):
+        return arrive
+    return arrive - buffer
+
+
+def slack(target: datetime, arrive: datetime) -> int:
+    """Minutes to spare between actually arriving and when you need to be there."""
+    return round((target - arrive).total_seconds() / 60)
+
+
 # ---- tool 1: when_to_leave ---------------------------------------------------
 
 
@@ -216,6 +255,7 @@ async def when_to_leave(
         raise _wrap(e)
 
     leave_by = depart - timedelta(minutes=buffer_minutes)
+    arrive_at = arrival_with_buffer(route, mode, arrive_at, timedelta(minutes=buffer_minutes))
     minutes_left = round((leave_by - now).total_seconds() / 60)
     if minutes_left < 0:
         status = f"late: you needed to leave {span(minutes_left)} ago"
@@ -231,6 +271,7 @@ async def when_to_leave(
         "minutes_until_leave": minutes_left,
         "expected_arrival": stamp(arrive_at, tz),
         "arrive_by": stamp(target, tz),
+        "slack_minutes": slack(target, arrive_at),
         "buffer_minutes": buffer_minutes,
         "mode": mode.lower(),
         "destination": destination,
@@ -267,7 +308,7 @@ async def compare_ways_to_get_there(
         if route is None:
             return {"mode": mode.lower(), "error": "no route"}
         trip = summarize(route, tz)
-        arrive = depart + timedelta(minutes=trip["minutes"])
+        arrive = depart + timedelta(minutes=trip["door_to_door_minutes"])
         if mode == "TRANSIT":
             window = transit_window(route)
             if window:
@@ -275,7 +316,7 @@ async def compare_ways_to_get_there(
         return {"mode": mode.lower(), "arrives": clock(arrive, tz), **trip}
 
     results = await asyncio.gather(*(one(m) for m in wanted))
-    ok = sorted((r for r in results if "error" not in r), key=lambda r: r["minutes"])
+    ok = sorted((r for r in results if "error" not in r), key=lambda r: r["door_to_door_minutes"])
     failed = [r for r in results if "error" in r]
     return {
         "from": origin_name,
@@ -490,35 +531,38 @@ async def plan_my_day(
                             f"Tight: to reach {label} by {clock(target, tz)} you'd need to leave by "
                             f"{clock(depart - buffer, tz)}, but {busy}. Expect to arrive about {late} min late."
                         )
-                elif here_label != "start" and leave_by - free_at >= timedelta(minutes=min_gap_minutes):
-                    gap = {
-                        "type": "free_time",
-                        "at": here_label,
-                        "from": clock(free_at, tz),
-                        "until": clock(leave_by, tz),
-                        "minutes": round((leave_by - free_at).total_seconds() / 60),
-                    }
-                    if fill_gaps_with:
-                        gap["suggestions"] = await _suggest(client, here, fill_gaps_with, free_at, now)
-                        gap["suggestions_note"] = f"Within about a 10 minute walk of {here_label}."
-                    schedule.append(gap)
+                else:
+                    arrive = arrival_with_buffer(route, mode, arrive, buffer)
+                    if here_label != "start" and leave_by - free_at >= timedelta(minutes=min_gap_minutes):
+                        gap = {
+                            "type": "free_time",
+                            "at": here_label,
+                            "from": clock(free_at, tz),
+                            "until": clock(leave_by, tz),
+                            "minutes": round((leave_by - free_at).total_seconds() / 60),
+                        }
+                        if fill_gaps_with:
+                            gap["suggestions"] = await _suggest(client, here, fill_gaps_with, free_at, now)
+                            gap["suggestions_note"] = f"Within about a 10 minute walk of {here_label}."
+                        schedule.append(gap)
             else:
                 route, leave_by, arrive = await depart_at_leg(client, here, stop.place, mode, max(free_at, soonest))
         except GoogleAPIError as e:
             raise _wrap(e)
 
         trip = summarize(route, tz)
-        travel_minutes += trip["minutes"]
-        schedule.append(
-            {
-                "type": "travel",
-                "from": here_label,
-                "to": label,
-                "leave_by": stamp(leave_by, tz),
-                "arrive": stamp(arrive, tz),
-                "trip": trip,
-            }
-        )
+        travel_minutes += trip["door_to_door_minutes"]
+        leg = {
+            "type": "travel",
+            "from": here_label,
+            "to": label,
+            "leave_by": stamp(leave_by, tz),
+            "arrive": stamp(arrive, tz),
+            "trip": trip,
+        }
+        if target:
+            leg["slack_minutes"] = slack(target, arrive)
+        schedule.append(leg)
         begins = max(arrive, target) if target else arrive
         ends = begins + timedelta(minutes=stop.stay_minutes)
         schedule.append(
@@ -536,3 +580,106 @@ async def plan_my_day(
         "warnings": warnings,
         "schedule": schedule,
     }
+
+
+# ---- tool 5: transit_options -------------------------------------------------
+
+MAX_OPTIONS = 6
+SEARCH_WINDOW = timedelta(hours=4)
+
+
+def _first_ride(route: dict) -> tuple[datetime, str | None] | None:
+    for leg in route.get("legs", []):
+        for s in leg.get("steps", []):
+            td = s.get("transitDetails")
+            if td:
+                line = td.get("transitLine", {})
+                when = datetime.fromisoformat(td["stopDetails"]["departureTime"])
+                return when, line.get("nameShort") or line.get("name")
+    return None
+
+
+def _option(route: dict, tz: ZoneInfo) -> dict:
+    leave, arrive = transit_window(route)
+    trip = summarize(route, tz)
+    out = {
+        "leave_door": clock(leave, tz),
+        "arrive_door": clock(arrive, tz),
+        "door_to_door_minutes": round((arrive - leave).total_seconds() / 60),
+        "transfers": trip.get("transfers", 0),
+        "walking_minutes": trip.get("walking_minutes"),
+        "directions": trip.get("directions", []),
+    }
+    if "fare" in trip:
+        out["fare"] = trip["fare"]
+    return out
+
+
+async def transit_options(
+    client: GoogleClient,
+    origin: str,
+    destination: str,
+    depart_after: str | None = None,
+    arrive_by: str | None = None,
+    count: int = 4,
+) -> dict:
+    if depart_after and arrive_by:
+        raise ToolError("Give depart_after or arrive_by, not both.")
+    if not 1 <= count <= MAX_OPTIONS:
+        raise ToolError(f"count must be between 1 and {MAX_OPTIONS}.")
+    now = now_utc()
+    try:
+        tz, _ = await place_tz(client, destination if arrive_by else origin)
+        options: list[tuple[datetime, dict]] = []
+        seen: set[tuple] = set()
+
+        if arrive_by:
+            target = parse_time(arrive_by, tz)
+            if target <= now:
+                raise ToolError(f"{clock(target, tz)} has already passed. Pick a later time.")
+            t = target
+            for _ in range(count * 2):
+                route = await client.compute_route(origin, destination, "TRANSIT", arrival_time=t)
+                window = transit_window(route) if route else None
+                if not window or window[0] < now or window[1] < target - SEARCH_WINDOW:
+                    break
+                key = _first_ride(route)
+                if key not in seen:
+                    seen.add(key)
+                    options.append((window[0], _option(route, tz)))
+                if len(options) == count:
+                    break
+                t = window[1] - timedelta(minutes=1)
+            options.sort(key=lambda o: o[0])
+        else:
+            start = max(parse_time(depart_after, tz) if depart_after else now, now + timedelta(seconds=30))
+            t = start
+            for _ in range(count * 2):
+                route = await client.compute_route(origin, destination, "TRANSIT", departure_time=t)
+                ride = _first_ride(route) if route else None
+                if not ride or ride[0] > start + SEARCH_WINDOW:
+                    break
+                if ride not in seen:
+                    seen.add(ride)
+                    options.append((transit_window(route)[0], _option(route, tz)))
+                if len(options) == count:
+                    break
+                t = ride[0] + timedelta(minutes=1)
+    except GoogleAPIError as e:
+        raise _wrap(e)
+
+    result: dict = {"from": origin, "to": destination, "options": [o for _, o in options]}
+    if arrive_by:
+        result["arrive_by"] = stamp(target, tz)
+        if options:
+            result["latest_that_makes_it"] = options[-1][1]["leave_door"]
+    else:
+        result["searching_from"] = stamp(start, tz)
+    if not options:
+        result["note"] = (
+            "No transit trips found in that window. It may be walkable, or service may have ended. "
+            "Try compare_ways_to_get_there."
+        )
+    elif len(options) < count:
+        result["note"] = f"Only {len(options)} trip(s) found within {int(SEARCH_WINDOW.total_seconds() // 3600)} hours."
+    return result

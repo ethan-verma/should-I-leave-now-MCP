@@ -13,6 +13,7 @@ An MCP server that tells Claude **when you need to leave** to get somewhere on t
 | `compare_ways_to_get_there` | Walk vs bike vs transit vs drive for one trip, fastest first |
 | `weather_along_the_way` | Rain, temperature, wind and air quality at both ends of the trip |
 | `plan_my_day` | A schedule for several stops: when to leave for each, free time between them, nearby spots to fill it, and warnings for stops you can't make on time |
+| `transit_options` | Several train or bus departures for one trip ("which Caltrain should I catch?"), each with door-to-door directions |
 
 ## Run it locally
 

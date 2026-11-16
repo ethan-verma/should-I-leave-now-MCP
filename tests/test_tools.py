@@ -108,8 +108,12 @@ async def test_transit_leave_time_counts_walking_and_buffer():
     assert out["status"] == "leave in 30 min"
     # Gets off 8:52 + 3 min walk.
     assert out["expected_arrival"]["local_time"] == "8:55 AM"
-    ride = out["trip"]["transit"][0]
+    walk_to, ride, walk_from = out["trip"]["directions"]
+    assert walk_to == {"do": "walk", "minutes": 5, "to": "Telegraph & Durant"}
     assert ride["line"] == "6" and ride["board_at"] == "Telegraph & Durant" and ride["departs"] == "8:40 AM"
+    assert walk_from == {"do": "walk", "minutes": 3, "to": "your destination"}
+    assert out["trip"]["transfers"] == 0
+    assert out["trip"]["door_to_door_minutes"] == 25
     assert out["trip"]["fare"] == "2.50 USD"
 
 
@@ -119,6 +123,26 @@ async def test_driving_adjusts_departure_for_traffic():
     # 20 min drive before 9:00 = 8:40, minus 5 min buffer.
     assert out["leave_by"]["local_time"] == "8:35 AM"
     assert all("departureTime" in b and b["routingPreference"] == "TRAFFIC_AWARE" for b in fake.route_bodies)
+
+
+async def test_driving_arrival_includes_the_buffer_as_slack():
+    # From Baton feedback: a 21 min drive to a 9:00 meeting with 15 min for parking.
+    fake = FakeGoogle(routes={"DRIVE": {"duration": "1260s", "distanceMeters": 16000, "legs": []}})
+    out = await tools.when_to_leave(
+        make(fake), "home", "Dwinelle Hall", "2026-11-04T09:00", mode="drive", buffer_minutes=15
+    )
+    assert out["leave_by"]["local_time"] == "8:24 AM"
+    # Leaving at 8:24 and driving 21 min gets you there at 8:45, not 8:59.
+    assert out["expected_arrival"]["local_time"] == "8:45 AM"
+    assert out["slack_minutes"] == 15
+
+
+async def test_transit_buffer_is_waiting_time_so_arrival_stays_put():
+    fake = FakeGoogle(routes={"TRANSIT": TRANSIT_ROUTE})
+    out = await tools.when_to_leave(make(fake), "home", "Dwinelle Hall", "2026-11-04T09:00")
+    # Same bus whether you leave at 8:30 or 8:35, so arrival is still 8:55.
+    assert out["expected_arrival"]["local_time"] == "8:55 AM"
+    assert out["slack_minutes"] == 5
 
 
 async def test_late_status_when_leave_time_has_passed():
@@ -378,3 +402,65 @@ async def test_long_wait_status_uses_hours():
     out = await tools.when_to_leave(make(fake), "home", "Dwinelle Hall", "2026-11-04T20:00", mode="walk")
     assert out["status"] == "leave in 11 h 45 min"
     assert out["destination"] == "Dwinelle Hall"
+
+
+async def test_plan_my_day_drive_leg_arrives_early_by_the_buffer():
+    fake = FakeGoogle(routes={"DRIVE": {"duration": "1200s", "distanceMeters": 8000, "legs": []}})
+    stops = [tools.Stop(place="Dwinelle Hall", arrive_by="2026-11-04T09:00")]
+    out = await tools.plan_my_day(make(fake), "home", stops, mode="drive", buffer_minutes=10)
+    leg = out["schedule"][0]
+    assert leg["leave_by"]["local_time"] == "8:30 AM"
+    assert leg["arrive"]["local_time"] == "8:50 AM"
+    assert leg["slack_minutes"] == 10
+
+
+# ---- transit_options ---------------------------------------------------------
+
+
+async def test_transit_options_lists_next_departures_in_order():
+    # bus_route boards 5 min after the asked time, so stepping a minute past each
+    # boarding gives a bus every 6 min.
+    fake = FakeGoogle(routes=bus_route)
+    out = await tools.transit_options(make(fake), "home", "Dwinelle Hall", depart_after="2026-11-04T08:00", count=3)
+    leaves = [o["leave_door"] for o in out["options"]]
+    assert leaves == ["8:02 AM", "8:08 AM", "8:14 AM"]  # board 8:05/8:11/8:17 minus 3 min walk
+    first = out["options"][0]
+    assert first["arrive_door"] == "8:17 AM"
+    assert first["door_to_door_minutes"] == 15
+    assert [d["do"] for d in first["directions"]] == ["walk", "ride", "walk"]
+    assert first["directions"][1]["line"] == "51B"
+    assert len(fake.route_bodies) == 3
+
+
+async def test_transit_options_works_back_from_arrive_by():
+    fake = FakeGoogle(routes=bus_route)
+    out = await tools.transit_options(make(fake), "home", "Dwinelle Hall", arrive_by="2026-11-04T09:00", count=3)
+    leaves = [o["leave_door"] for o in out["options"]]
+    # Earliest first; each arrives before 9:00.
+    assert leaves == sorted(leaves, key=lambda s: datetime.strptime(s, "%I:%M %p"))
+    assert out["latest_that_makes_it"] == leaves[-1] == "8:42 AM"
+    assert all(o["arrive_door"] <= "8:57 AM" for o in out["options"])
+
+
+async def test_transit_options_skips_trips_that_leave_in_the_past():
+    fake = FakeGoogle(routes=bus_route)
+    # 8:20 arrival: the only buses that make it would mean leaving before 8:00 (now).
+    out = await tools.transit_options(make(fake), "home", "Dwinelle Hall", arrive_by="2026-11-04T08:20", count=4)
+    assert all(o["leave_door"] >= "8:00 AM" for o in out["options"])
+    assert len(out["options"]) < 4 and "note" in out
+
+
+async def test_transit_options_rejects_both_times():
+    with pytest.raises(ToolError, match="not both"):
+        await tools.transit_options(
+            make(FakeGoogle()), "home", "Dwinelle Hall", depart_after="2026-11-04T08:00", arrive_by="2026-11-04T09:00"
+        )
+
+
+async def test_transit_options_through_the_mcp_server(monkeypatch):
+    monkeypatch.setattr(server, "_client", make(FakeGoogle(routes=bus_route)))
+    result = await server.server.call_tool(
+        "transit_options", {"origin": "home", "destination": "Dwinelle Hall", "count": 2}
+    )
+    assert not result.is_error, result.content[0].text
+    assert "leave_door" in result.content[0].text

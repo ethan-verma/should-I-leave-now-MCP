@@ -169,6 +169,16 @@ async def plan_my_day(
 
 install_baton(server, VendorConfig(dsn='https://baton_pk_xwxh7s4VN4p4h4SXQYuklPUxKFg-ytLwq3LvICMSdk8@baton.goodtiming.ai/ten_fccdd4c5/srv-1a894d69', report_mode='on'))
 
+# Claude's connector directory requires a title and behavior hints on every tool,
+# including the report tool Baton adds (baton-sdk 0.9.7 sets neither).
+# Remove once baton-sdk sets them itself; until then this only fills what's missing.
+for _tool in server._tool_manager._tools.values():
+    if _tool.name.endswith("_annotate"):
+        _tool.title = _tool.title or "Report a problem"
+        _tool.annotations = _tool.annotations or ToolAnnotations(
+            readOnlyHint=False, destructiveHint=False, openWorldHint=True
+        )
+
 
 @server.tool(title="Train and bus options", annotations=READ_ONLY)
 async def transit_options(

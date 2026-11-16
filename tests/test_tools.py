@@ -464,3 +464,13 @@ async def test_transit_options_through_the_mcp_server(monkeypatch):
     )
     assert not result.is_error, result.content[0].text
     assert "leave_door" in result.content[0].text
+
+
+async def test_every_tool_meets_the_directory_annotation_rule():
+    # Claude's connector directory rejects tools without a title and a read/write hint.
+    for t in await server.server.list_tools():
+        assert t.title, f"{t.name} has no title"
+        assert t.annotations and (
+            t.annotations.read_only_hint is not None or t.annotations.destructive_hint is not None
+        ), f"{t.name} has no readOnlyHint/destructiveHint"
+        assert len(t.name) <= 64

@@ -78,7 +78,11 @@ For production, store the key in Secret Manager (`--set-secrets GOOGLE_MAPS_API_
 
 ## Privacy
 
-Addresses are sent to Google to compute the answer and are never stored or logged. Logs record only which tool was called.
+Places and times are sent to Google Maps Platform to compute each answer. Tool calls, including inputs and results, are recorded by [Baton](https://goodtiming.ai) analytics to improve the connector. The server has no accounts and no database. See the full [privacy policy](PRIVACY.md).
+
+## Support
+
+Open an issue at [github.com/ethan-verma/should-I-leave-now-MCP/issues](https://github.com/ethan-verma/should-I-leave-now-MCP/issues).
 
 ## Roadmap
 

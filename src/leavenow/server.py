@@ -62,7 +62,9 @@ def client() -> GoogleClient:
 
 def read_only(title: str) -> ToolAnnotations:
     """Annotations for a read-only tool. The directory checks annotations.title as well as the tool's title."""
-    return ToolAnnotations(title=title, readOnlyHint=True, openWorldHint=True, idempotentHint=True)
+    return ToolAnnotations(
+        title=title, readOnlyHint=True, destructiveHint=False, openWorldHint=True, idempotentHint=True
+    )
 
 PLACE_HINT = (
     "An address, a building or place name with its city, or 'lat,lng'. "

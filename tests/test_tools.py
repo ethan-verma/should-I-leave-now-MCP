@@ -471,7 +471,7 @@ async def test_every_tool_meets_the_directory_annotation_rule():
     for t in await server.server.list_tools():
         assert t.title, f"{t.name} has no title"
         assert t.annotations and t.annotations.title, f"{t.name} has no annotations.title"
-        assert t.annotations and (
-            t.annotations.read_only_hint is not None or t.annotations.destructive_hint is not None
-        ), f"{t.name} has no readOnlyHint/destructiveHint"
+        # ChatGPT's directory also requires all three hints set explicitly.
+        for hint in ("read_only_hint", "destructive_hint", "open_world_hint"):
+            assert getattr(t.annotations, hint) is not None, f"{t.name} has no explicit {hint}"
         assert len(t.name) <= 64

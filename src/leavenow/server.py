@@ -60,7 +60,9 @@ def client() -> GoogleClient:
     return _client
 
 
-READ_ONLY = ToolAnnotations(readOnlyHint=True, openWorldHint=True, idempotentHint=True)
+def read_only(title: str) -> ToolAnnotations:
+    """Annotations for a read-only tool. The directory checks annotations.title as well as the tool's title."""
+    return ToolAnnotations(title=title, readOnlyHint=True, openWorldHint=True, idempotentHint=True)
 
 PLACE_HINT = (
     "An address, a building or place name with its city, or 'lat,lng'. "
@@ -68,7 +70,7 @@ PLACE_HINT = (
 )
 
 
-@server.tool(title="When should I leave?", annotations=READ_ONLY)
+@server.tool(title="When should I leave?", annotations=read_only("When should I leave?"))
 async def when_to_leave(
     origin: Annotated[str, Field(description="Where the trip starts. " + PLACE_HINT)],
     destination: Annotated[str, Field(description="Where the user needs to be. " + PLACE_HINT)],
@@ -97,7 +99,7 @@ async def when_to_leave(
     return await tools.when_to_leave(client(), origin, destination, arrive_by, mode, buffer_minutes)
 
 
-@server.tool(title="Compare ways to get there", annotations=READ_ONLY)
+@server.tool(title="Compare ways to get there", annotations=read_only("Compare ways to get there"))
 async def compare_ways_to_get_there(
     origin: Annotated[str, Field(description="Where the trip starts. " + PLACE_HINT)],
     destination: Annotated[str, Field(description="Where they're going. " + PLACE_HINT)],
@@ -118,7 +120,7 @@ async def compare_ways_to_get_there(
     return await tools.compare_ways_to_get_there(client(), origin, destination, depart_at, modes)
 
 
-@server.tool(title="Weather along the way", annotations=READ_ONLY)
+@server.tool(title="Weather along the way", annotations=read_only("Weather along the way"))
 async def weather_along_the_way(
     origin: Annotated[str, Field(description="Where the trip starts. " + PLACE_HINT)],
     destination: Annotated[str, Field(description="Where they're going. " + PLACE_HINT)],
@@ -136,7 +138,7 @@ async def weather_along_the_way(
     return await tools.weather_along_the_way(client(), origin, destination, time, units)
 
 
-@server.tool(title="Plan my day", annotations=READ_ONLY)
+@server.tool(title="Plan my day", annotations=read_only("Plan my day"))
 async def plan_my_day(
     start: Annotated[str, Field(description="Where the day starts, e.g. their apartment. " + PLACE_HINT)],
     stops: Annotated[
@@ -176,11 +178,11 @@ for _tool in server._tool_manager._tools.values():
     if _tool.name.endswith("_annotate"):
         _tool.title = _tool.title or "Report a problem"
         _tool.annotations = _tool.annotations or ToolAnnotations(
-            readOnlyHint=False, destructiveHint=False, openWorldHint=True
+            title=_tool.title, readOnlyHint=False, destructiveHint=False, openWorldHint=True
         )
 
 
-@server.tool(title="Train and bus options", annotations=READ_ONLY)
+@server.tool(title="Train and bus options", annotations=read_only("Train and bus options"))
 async def transit_options(
     origin: Annotated[str, Field(description="Where the trip starts. " + PLACE_HINT)],
     destination: Annotated[str, Field(description="Where they're going. " + PLACE_HINT)],

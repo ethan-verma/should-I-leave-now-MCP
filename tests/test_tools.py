@@ -470,6 +470,7 @@ async def test_every_tool_meets_the_directory_annotation_rule():
     # Claude's connector directory rejects tools without a title and a read/write hint.
     for t in await server.server.list_tools():
         assert t.title, f"{t.name} has no title"
+        assert t.annotations and t.annotations.title, f"{t.name} has no annotations.title"
         assert t.annotations and (
             t.annotations.read_only_hint is not None or t.annotations.destructive_hint is not None
         ), f"{t.name} has no readOnlyHint/destructiveHint"

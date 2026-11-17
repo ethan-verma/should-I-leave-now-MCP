@@ -28,6 +28,9 @@ log = logging.getLogger("leavenow.auth")
 PROTECTED_TOOLS = frozenset({"save_place", "my_places", "forget_place"})
 METADATA_PATHS = ("/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp")
 DEFAULT_RESOURCE = "https://should-i-leave-now.onrender.com/mcp"
+# What Claude asks WorkOS for. offline_access gives a refresh token, so users
+# stay signed in past the 5-minute access token.
+SCOPES = ("openid", "profile", "email", "offline_access")
 
 
 @dataclass(frozen=True)
@@ -73,13 +76,14 @@ class AuthSettings:
             "resource": self.resource,
             "authorization_servers": [self.issuer],
             "bearer_methods_supported": ["header"],
+            "scopes_supported": list(SCOPES),
             "resource_name": "Should I Leave Now?",
         }
 
     def challenge(self, description: str, error: str = "invalid_token") -> JSONResponse:
         header = (
             f'Bearer error="{error}", error_description="{description}", '
-            f'resource_metadata="{self.metadata_url()}"'
+            f'resource_metadata="{self.metadata_url()}", scope="{" ".join(SCOPES)}"'
         )
         return JSONResponse(
             {"error": error, "error_description": description},

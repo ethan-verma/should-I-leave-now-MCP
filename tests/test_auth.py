@@ -72,6 +72,7 @@ async def test_metadata_points_claude_at_workos(fake):
         assert r.status_code == 200
         assert r.json()["resource"] == "https://should-i-leave-now.onrender.com/mcp"
         assert r.json()["authorization_servers"] == ["https://test.authkit.app"]
+        assert "offline_access" in r.json()["scopes_supported"]
         assert (await http.get("/.well-known/oauth-protected-resource")).status_code == 200
 
 
@@ -93,6 +94,7 @@ async def test_saved_place_tools_ask_for_sign_in(fake):
         challenge = r.headers["www-authenticate"]
         assert challenge.startswith("Bearer ")
         assert 'resource_metadata="https://should-i-leave-now.onrender.com/.well-known/oauth-protected-resource/mcp"' in challenge
+        assert 'scope="openid profile email offline_access"' in challenge
         # Listing tools never needs sign-in.
         r = await post(http, {"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
         assert r.status_code == 200

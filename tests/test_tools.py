@@ -15,6 +15,7 @@ NOW = datetime(2026, 11, 4, 16, 0, tzinfo=timezone.utc)  # 8:00 AM in Berkeley (
 PLACES = {
     "home": ("2600 Durant Ave, Berkeley, CA", 37.8680, -122.2560),
     "dwinelle hall": ("Dwinelle Hall, Berkeley, CA", 37.8706, -122.2606),
+    "2600 durant ave": ("2600 Durant Ave, Berkeley, CA", 37.8680, -122.2560),
     "soda hall": ("Soda Hall, Berkeley, CA", 37.8756, -122.2588),
 }
 
@@ -231,7 +232,7 @@ async def test_cache_avoids_repeat_google_calls():
 async def test_tool_runs_through_the_mcp_server(monkeypatch):
     monkeypatch.setattr(server, "_client", make(FakeGoogle(routes={"TRANSIT": TRANSIT_ROUTE})))
     result = await server.server.call_tool(
-        "when_to_leave", {"origin": "home", "destination": "Dwinelle Hall", "arrive_by": "2026-11-04T09:00"}
+        "when_to_leave", {"origin": "2600 Durant Ave", "destination": "Dwinelle Hall", "arrive_by": "2026-11-04T09:00"}
     )
     assert not result.is_error
     assert "8:30 AM" in result.content[0].text
@@ -377,7 +378,7 @@ async def test_plan_my_day_through_the_mcp_server(monkeypatch):
     monkeypatch.setattr(server, "_client", make(FakeGoogle(routes=bus_route)))
     result = await server.server.call_tool(
         "plan_my_day",
-        {"start": "home", "stops": [{"place": "Dwinelle Hall", "arrive_by": "2026-11-04T09:00", "label": "Lecture"}]},
+        {"start": "2600 Durant Ave", "stops": [{"place": "Dwinelle Hall", "arrive_by": "2026-11-04T09:00", "label": "Lecture"}]},
     )
     assert not result.is_error, result.content[0].text
     assert "8:37 AM" in result.content[0].text
@@ -460,7 +461,7 @@ async def test_transit_options_rejects_both_times():
 async def test_transit_options_through_the_mcp_server(monkeypatch):
     monkeypatch.setattr(server, "_client", make(FakeGoogle(routes=bus_route)))
     result = await server.server.call_tool(
-        "transit_options", {"origin": "home", "destination": "Dwinelle Hall", "count": 2}
+        "transit_options", {"origin": "2600 Durant Ave", "destination": "Dwinelle Hall", "count": 2}
     )
     assert not result.is_error, result.content[0].text
     assert "leave_door" in result.content[0].text

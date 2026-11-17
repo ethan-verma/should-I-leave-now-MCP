@@ -13,14 +13,14 @@ from collections import defaultdict, deque
 from typing import Annotated
 
 import uvicorn
-from baton import VendorConfig, install_baton
+from baton import Principal, PrincipalResolutionContext, VendorConfig, install_baton
 from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
 from pydantic import Field
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from . import tools
+from . import auth, saved, tools
 from .google import GoogleClient
 
 log = logging.getLogger("leavenow")
@@ -39,6 +39,18 @@ When the user wants a choice of trains or buses ("which Caltrain should I catch"
 after 9:30"), use transit_options: it lists several departures, not just one.
 If the user has told you their home or work address earlier, reuse it rather than asking again.
 """
+
+SAVED_INSTRUCTIONS = """
+Signed-in users can save places (home, work, school, or any short name) with save_place, then use \
+that name as any place in a trip, e.g. origin="home". Signing in is optional and only needed for \
+saved places; my_places shows what's saved.
+"""
+
+AUTH = auth.AuthSettings.from_env()
+STORE = saved.store_from_env() if AUTH else None
+SAVED_PLACES = AUTH is not None and STORE is not None
+if SAVED_PLACES:
+    INSTRUCTIONS += SAVED_INSTRUCTIONS
 
 server = MCPServer(
     name="should-i-leave-now",
@@ -69,7 +81,16 @@ def read_only(title: str) -> ToolAnnotations:
 PLACE_HINT = (
     "An address, a building or place name with its city, or 'lat,lng'. "
     "Use the real door-to-door endpoint, not a nearby station."
+    + (" A saved place name like 'home' or 'work' also works for signed-in users." if SAVED_PLACES else "")
 )
+
+
+async def place(value: str, cache: dict) -> str:
+    """'home' → the signed-in user's saved address. Other values pass through."""
+    if not SAVED_PLACES:
+        return value
+    user = auth.current_user()
+    return await saved.resolve(STORE, user.id if user else None, value, cache)
 
 
 @server.tool(title="When should I leave?", annotations=read_only("When should I leave?"))
@@ -98,6 +119,8 @@ async def when_to_leave(
     leaving early just means waiting at the stop for the same ride.
     """
     log.info("tool=when_to_leave mode=%s", mode)
+    c: dict = {}
+    origin, destination = await place(origin, c), await place(destination, c)
     return await tools.when_to_leave(client(), origin, destination, arrive_by, mode, buffer_minutes)
 
 
@@ -119,6 +142,8 @@ async def compare_ways_to_get_there(
     Options come back fastest first.
     """
     log.info("tool=compare_ways_to_get_there")
+    c: dict = {}
+    origin, destination = await place(origin, c), await place(destination, c)
     return await tools.compare_ways_to_get_there(client(), origin, destination, depart_at, modes)
 
 
@@ -137,6 +162,8 @@ async def weather_along_the_way(
     Use it to answer 'should I bike or bus', 'do I need an umbrella', or 'is the air OK to walk'.
     """
     log.info("tool=weather_along_the_way")
+    c: dict = {}
+    origin, destination = await place(origin, c), await place(destination, c)
     return await tools.weather_along_the_way(client(), origin, destination, time, units)
 
 
@@ -166,12 +193,39 @@ async def plan_my_day(
     with arrive_by also carry slack_minutes, the time to spare before that stop starts.
     """
     log.info("tool=plan_my_day stops=%d mode=%s", len(stops), mode)
+    c: dict = {}
+    start = await place(start, c)
+    resolved = []
+    for s in stops:
+        address = await place(s.place, c)
+        # Keep "home" as the label when a saved name was used, not the full address.
+        label = s.label or (s.place if address != s.place else None)
+        resolved.append(s.model_copy(update={"place": address, "label": label}))
     return await tools.plan_my_day(
-        client(), start, stops, mode, start_time, buffer_minutes, fill_gaps_with, min_gap_minutes
+        client(), start, resolved, mode, start_time, buffer_minutes, fill_gaps_with, min_gap_minutes
     )
 
 
-install_baton(server, VendorConfig(dsn='https://baton_pk_xwxh7s4VN4p4h4SXQYuklPUxKFg-ytLwq3LvICMSdk8@baton.goodtiming.ai/ten_fccdd4c5/srv-1a894d69', report_mode='on'))
+BATON_USERS = {e.strip().lower() for e in os.environ.get("BATON_USERS", "").split(",") if e.strip()}
+
+
+def baton_principal(ctx: PrincipalResolutionContext) -> Principal | None:
+    """Name a caller to Baton only if they signed in and are on the BATON_USERS list.
+
+    Everyone else stays anonymous. The "baton" label is what a Baton console rule
+    matches to turn full capture on for these users.
+    """
+    user = auth.current_user()
+    if user is None and AUTH is not None and ctx.headers:
+        header = ctx.headers.get("authorization") or ""
+        if header.lower().startswith("bearer "):
+            user = AUTH.user_for_token(header[7:].strip())
+    if user is None or not user.email or user.email.lower() not in BATON_USERS:
+        return None
+    return Principal(principal_id=user.id, display_name=user.email, labels=["baton"])
+
+
+install_baton(server, VendorConfig(dsn='https://baton_pk_xwxh7s4VN4p4h4SXQYuklPUxKFg-ytLwq3LvICMSdk8@baton.goodtiming.ai/ten_fccdd4c5/srv-1a894d69', report_mode='on', resolve_principal=baton_principal))
 
 # Claude's connector directory requires a title and behavior hints on every tool,
 # including the report tool Baton adds (baton-sdk 0.9.7 sets neither).
@@ -205,7 +259,60 @@ async def transit_options(
     and step-by-step directions. With arrive_by, latest_that_makes_it is the last one that gets them there on time.
     """
     log.info("tool=transit_options count=%d", count)
+    c: dict = {}
+    origin, destination = await place(origin, c), await place(destination, c)
     return await tools.transit_options(client(), origin, destination, depart_after, arrive_by, count)
+
+
+def _signed_in() -> auth.User:
+    user = auth.current_user()
+    if user is None:  # The auth middleware asks for sign-in before we get here.
+        raise tools.ToolError("Sign in to use saved places.")
+    return user
+
+
+if SAVED_PLACES:
+
+    @server.tool(
+        title="Save a place",
+        annotations=ToolAnnotations(
+            title="Save a place", readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=True
+        ),
+    )
+    async def save_place(
+        name: Annotated[str, Field(description="Short name to save it under: home, work, school, gym, parents…")],
+        address: Annotated[str, Field(description="The full address or place name with city.")],
+    ) -> dict:
+        """Save a place for this signed-in user so 'home', 'work' or any saved name works in every trip tool.
+
+        Needs sign-in; the first call prompts the user to sign in. Saving the same name again replaces it.
+        """
+        log.info("tool=save_place")
+        return await saved.save_place(STORE, client(), _signed_in().id, name, address)
+
+    @server.tool(
+        title="My saved places",
+        annotations=ToolAnnotations(
+            title="My saved places", readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False
+        ),
+    )
+    async def my_places() -> dict:
+        """List this signed-in user's saved places. Calling it while signed out prompts sign-in."""
+        log.info("tool=my_places")
+        return await saved.my_places(STORE, _signed_in().id)
+
+    @server.tool(
+        title="Forget a saved place",
+        annotations=ToolAnnotations(
+            title="Forget a saved place", readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=False
+        ),
+    )
+    async def forget_place(
+        name: Annotated[str, Field(description="The saved name to remove, e.g. work.")],
+    ) -> dict:
+        """Delete one of this signed-in user's saved places."""
+        log.info("tool=forget_place")
+        return await saved.forget_place(STORE, _signed_in().id, name)
 
 
 @server.custom_route("/health", methods=["GET"])
@@ -247,6 +354,7 @@ def main() -> None:
     host = os.environ.get("HOST", "0.0.0.0")
     port = int(os.environ.get("PORT", "8080"))
     app = server.streamable_http_app(stateless_http=True, json_response=True, host=host)
+    app = auth.AuthMiddleware(app, AUTH if SAVED_PLACES else None)
     app = RateLimit(app, per_minute=int(os.environ.get("RATE_LIMIT_PER_MINUTE", "60")))
     uvicorn.run(app, host=host, port=port, proxy_headers=True, forwarded_allow_ips="*")
 

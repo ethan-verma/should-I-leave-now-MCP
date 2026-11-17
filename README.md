@@ -13,6 +13,7 @@ An MCP server that tells Claude **when you need to leave** to get somewhere on t
 | `compare_ways_to_get_there` | Walk vs bike vs transit vs drive for one trip, fastest first |
 | `weather_along_the_way` | Rain, temperature, wind and air quality at both ends of the trip |
 | `plan_my_day` | A schedule for several stops: when to leave for each, free time between them, nearby spots to fill it, and warnings for stops you can't make on time |
+| `save_place`, `my_places`, `forget_place` | Optional sign-in: save home, work or any place, then say "home" in any trip |
 | `transit_options` | Several train or bus departures for one trip ("which Caltrain should I catch?"), each with door-to-door directions |
 
 ## Run it locally
@@ -78,7 +79,7 @@ For production, store the key in Secret Manager (`--set-secrets GOOGLE_MAPS_API_
 
 ## Privacy
 
-Places and times are sent to Google Maps Platform to compute each answer. Tool calls, including inputs and results, are recorded by [Baton](https://goodtiming.ai) analytics to improve the connector. The server has no accounts and no database. See the full [privacy policy](PRIVACY.md).
+Places and times are sent to Google Maps Platform to compute each answer. Tool calls, including inputs and results, are recorded by [Baton](https://goodtiming.ai) analytics to improve the connector. Signing in is optional; it stores your WorkOS user ID, email and saved places in Firestore. See the full [privacy policy](PRIVACY.md).
 
 ## Support
 

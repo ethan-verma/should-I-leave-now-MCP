@@ -27,6 +27,9 @@ log = logging.getLogger("leavenow.auth")
 
 PROTECTED_TOOLS = frozenset({"save_place", "my_places", "forget_place"})
 METADATA_PATHS = ("/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp")
+# With lazy sign-in, the metadata lives only here, so Claude doesn't find it when
+# the connector is added and only asks for sign-in when a saved-places tool is called.
+LAZY_METADATA_PATH = "/oauth/protected-resource"
 DEFAULT_RESOURCE = "https://should-i-leave-now.onrender.com/mcp"
 # What Claude asks WorkOS for. offline_access gives a refresh token, so users
 # stay signed in past the 5-minute access token.
@@ -47,7 +50,14 @@ def current_user() -> User | None:
 
 
 class AuthSettings:
-    def __init__(self, authkit_domain: str, resource: str = DEFAULT_RESOURCE, workos_api_key: str | None = None):
+    def __init__(
+        self,
+        authkit_domain: str,
+        resource: str = DEFAULT_RESOURCE,
+        workos_api_key: str | None = None,
+        lazy: bool = False,
+    ):
+        self.lazy = lazy
         domain = authkit_domain.strip().rstrip("/")
         self.issuer = domain if domain.startswith("https://") else f"https://{domain}"
         self.resource = resource
@@ -62,14 +72,22 @@ class AuthSettings:
         domain = os.environ.get("AUTHKIT_DOMAIN")
         if not domain:
             return None
-        return cls(domain, os.environ.get("PUBLIC_URL", DEFAULT_RESOURCE), os.environ.get("WORKOS_API_KEY"))
+        return cls(
+            domain,
+            os.environ.get("PUBLIC_URL", DEFAULT_RESOURCE),
+            os.environ.get("WORKOS_API_KEY"),
+            lazy=os.environ.get("LAZY_SIGNIN", "").lower() in ("1", "true", "yes"),
+        )
+
+    def metadata_paths(self) -> tuple[str, ...]:
+        return (LAZY_METADATA_PATH,) if self.lazy else METADATA_PATHS
 
     # ---- what Claude reads ---------------------------------------------------
 
     def metadata_url(self) -> str:
         origin = self.resource.split("/", 3)
         base = "/".join(origin[:3])
-        return base + "/.well-known/oauth-protected-resource/mcp"
+        return base + (LAZY_METADATA_PATH if self.lazy else "/.well-known/oauth-protected-resource/mcp")
 
     def metadata(self) -> dict:
         return {
@@ -176,7 +194,7 @@ class AuthMiddleware:
         if scope["type"] != "http" or s is None:
             return await self.app(scope, receive, send)
 
-        if scope["method"] == "GET" and scope.get("path") in METADATA_PATHS:
+        if scope["method"] == "GET" and scope.get("path") in s.metadata_paths():
             resp = JSONResponse(s.metadata(), headers={"Access-Control-Allow-Origin": "*"})
             return await resp(scope, receive, send)
 

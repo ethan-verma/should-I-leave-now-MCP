@@ -211,3 +211,26 @@ def test_baton_names_only_listed_testers():
     finally:
         auth._current.reset(t)
     assert server.baton_principal(type("Ctx", (), {"headers": {}})()) is None
+
+
+# ---- lazy sign-in (LAZY_SIGNIN=1) --------------------------------------------------
+
+
+async def test_lazy_signin_hides_metadata_until_a_saved_place_tool_is_called(fake, monkeypatch):
+    monkeypatch.setattr(server.AUTH, "lazy", True)
+    async with serve() as http:
+        # Adding the connector finds no sign-in details at the standard address.
+        assert (await http.get("/.well-known/oauth-protected-resource")).status_code != 200
+        assert (await http.get("/.well-known/oauth-protected-resource/mcp")).status_code != 200
+        # Trip tools work with no account.
+        r = await post(http, call("when_to_leave", {"origin": "2600 Durant Ave", "destination": "Dwinelle Hall", "arrive_by": "2026-11-04T09:00"}))
+        assert r.status_code == 200 and not result_text(r)[0]
+        # Saving a place points Claude at the private metadata address.
+        r = await post(http, call("save_place", {"name": "home", "address": "home"}))
+        assert r.status_code == 401
+        assert 'resource_metadata="https://should-i-leave-now.onrender.com/oauth/protected-resource"' in r.headers["www-authenticate"]
+        meta = await http.get("/oauth/protected-resource")
+        assert meta.status_code == 200 and meta.json()["authorization_servers"] == ["https://test.authkit.app"]
+        # Once signed in, everything works as before.
+        r = await post(http, call("save_place", {"name": "home", "address": "home"}), token=GOOD)
+        assert not result_text(r)[0]

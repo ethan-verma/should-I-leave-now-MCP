@@ -198,19 +198,29 @@ async def test_bad_tokens_are_rejected(signer, bad):
 # ---- Baton tagging ---------------------------------------------------------------
 
 
-def test_baton_names_only_listed_testers():
-    t = auth._current.set(User("user_2", "Tester@Example.com"))
+def _principal_for(user):
+    t = auth._current.set(user)
     try:
-        p = server.baton_principal(type("Ctx", (), {"headers": {}})())
-        assert p is not None and p.labels == ["baton"] and p.display_name == "Tester@Example.com"
+        return server.baton_principal(type("Ctx", (), {"headers": {}})())
     finally:
         auth._current.reset(t)
-    t = auth._current.set(User("user_1", "someone@example.com"))
-    try:
-        assert server.baton_principal(type("Ctx", (), {"headers": {}})()) is None
-    finally:
-        auth._current.reset(t)
-    assert server.baton_principal(type("Ctx", (), {"headers": {}})()) is None
+
+
+def test_standard_names_every_signed_in_user(monkeypatch):
+    monkeypatch.setattr(server, "BATON_MODE", "everyone")
+    p = _principal_for(User("user_2", "Tester@Example.com"))
+    assert p is not None and p.labels == ["baton"] and p.display_name == "Tester@Example.com"
+    p = _principal_for(User("user_1", "someone@example.com"))
+    assert p is not None and p.labels == [] and p.display_name == "someone@example.com"
+    assert _principal_for(None) is None
+
+
+def test_directory_app_names_only_listed_testers(monkeypatch):
+    monkeypatch.setattr(server, "BATON_MODE", "named")
+    p = _principal_for(User("user_2", "Tester@Example.com"))
+    assert p is not None and p.labels == ["baton"]
+    assert _principal_for(User("user_1", "someone@example.com")) is None
+    assert _principal_for(None) is None
 
 
 # ---- lazy sign-in (LAZY_SIGNIN=1) --------------------------------------------------

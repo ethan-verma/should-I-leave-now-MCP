@@ -35,7 +35,7 @@ We do not sell your data, use it for advertising, or build profiles of individua
 | Service | What it receives | Why | Its policy |
 | --- | --- | --- | --- |
 | Google Maps Platform | Places, times and travel options in each request | To compute the answer | [Google Privacy Policy](https://policies.google.com/privacy) |
-| Baton by Good Timing | Tool names, inputs, results, errors, the purpose note and the assistant app's name. Your email only if you are one of our named testers. | Usage analytics to improve the connector | [Good Timing Privacy Policy](https://goodtiming.ai/privacy) |
+| Baton by Good Timing | Tool names, inputs, results, errors, the purpose note and the assistant app's name, plus your email if you are signed in. On the directory version (should-i-leave-now-app), Baton is used only for our named testers; nothing about anyone else goes to Baton. | Usage analytics to improve the connector | [Good Timing Privacy Policy](https://goodtiming.ai/privacy) |
 | Render | Standard request logs (IP address, time, path) | Hosting the server | [Render Privacy Policy](https://render.com/privacy) |
 | WorkOS | Your sign-in, if you sign in | Signing you in | [WorkOS Privacy Policy](https://workos.com/privacy) |
 | Google Cloud Firestore | Your user ID and saved places, if you save any | Storing saved places | [Google Privacy Policy](https://policies.google.com/privacy) |

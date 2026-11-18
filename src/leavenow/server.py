@@ -240,19 +240,23 @@ BATON_USERS = {e.strip().lower() for e in os.environ.get("BATON_USERS", "").spli
 
 
 def baton_principal(ctx: PrincipalResolutionContext) -> Principal | None:
-    """Name a caller to Baton only if they signed in and are on the BATON_USERS list.
+    """Who the caller is, for Baton.
 
-    Everyone else stays anonymous. The "baton" label is what a Baton console rule
-    matches to turn full capture on for these users.
+    Standard: every signed-in user is named. Directory App: only BATON_USERS ever
+    reach Baton, so only they are named. Signed-out callers stay anonymous.
+    The "baton" label marks BATON_USERS, for Baton console rules to match.
     """
     user = auth.current_user()
     if user is None and AUTH is not None and ctx.headers:
         header = ctx.headers.get("authorization") or ""
         if header.lower().startswith("bearer "):
             user = AUTH.user_for_token(header[7:].strip())
-    if user is None or not user.email or user.email.lower() not in BATON_USERS:
+    if user is None or not user.email:
         return None
-    return Principal(principal_id=user.id, display_name=user.email, labels=["baton"])
+    listed = user.email.lower() in BATON_USERS
+    if BATON_MODE == "named" and not listed:
+        return None
+    return Principal(principal_id=user.id, display_name=user.email, labels=["baton"] if listed else [])
 
 
 @tool(title="Train and bus options", annotations=read_only("Train and bus options"))

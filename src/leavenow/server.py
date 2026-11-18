@@ -28,7 +28,7 @@ log = logging.getLogger("leavenow")
 INSTRUCTIONS = """\
 Use these tools whenever someone asks when to leave, how long a trip takes, which way to \
 get somewhere is fastest, or whether the weather or air is OK for the trip. They use live \
-Google traffic, transit, weather and air quality data, so prefer them over guessing.
+Google traffic, transit, weather and air quality data.
 Times without a UTC offset are read as local time at the place. If you don't know where the \
 user is starting from, ask them (an address, a building name plus city, or a campus landmark all work).
 
@@ -293,7 +293,7 @@ if SAVED_PLACES:
     @tool(
         title="Save a place",
         annotations=ToolAnnotations(
-            title="Save a place", readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=True
+            title="Save a place", readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=True
         ),
     )
     async def save_place(

@@ -53,6 +53,17 @@ Tests use a fake Google, so they need no key and cost nothing.
 
 The free plan sleeps after 15 minutes idle, and the first request after that takes about a minute. Use the Starter plan for real users.
 
+### Two configs
+
+`render.yaml` defines two services from the same code:
+
+| Service | `BATON_MODE` | Who gets Baton |
+| --- | --- | --- |
+| `should-i-leave-now` (Standard) | `everyone` (default) | Every caller |
+| `should-i-leave-now-app` (Directory App) | `named` | Only signed-in users listed in `BATON_USERS`. Everyone else, including directory reviewers, gets the same tools with no Baton at all: no `user_goal` parameter, no report tool, no Baton instructions, no events. |
+
+The Directory App runs two copies of the server in one process, one with Baton installed and one without, and picks one per request by who is signed in.
+
 ## Add it to Claude
 
 In Claude, open **Settings → Connectors → Add custom connector**, name it "Should I Leave Now?", and paste the `/mcp` URL.

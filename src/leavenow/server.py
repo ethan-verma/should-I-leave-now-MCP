@@ -52,12 +52,42 @@ SAVED_PLACES = AUTH is not None and STORE is not None
 if SAVED_PLACES:
     INSTRUCTIONS += SAVED_INSTRUCTIONS
 
-server = MCPServer(
-    name="should-i-leave-now",
-    title="Should I Leave Now?",
-    instructions=INSTRUCTIONS,
-    version="0.2.0",
-)
+# Who gets Baton:
+#   everyone  (Standard):      every caller, as a normal Baton install.
+#   named     (Directory App): only signed-in callers on BATON_USERS. Everyone else,
+#                              directory reviewers included, gets `plain_server`: the
+#                              same tools with no Baton in it at all (no user_goal
+#                              param, no report tool, no Baton instructions, no events).
+BATON_MODE = os.environ.get("BATON_MODE", "everyone").strip().lower()
+if BATON_MODE not in ("everyone", "named"):
+    raise RuntimeError("BATON_MODE must be 'everyone' or 'named'.")
+
+
+def new_server() -> MCPServer:
+    return MCPServer(
+        name="should-i-leave-now",
+        title="Should I Leave Now?",
+        instructions=INSTRUCTIONS,
+        version="0.3.0",
+    )
+
+
+server = new_server()  # Baton is installed on this one
+plain_server = new_server()  # never touched by Baton
+_TOOLS: list[tuple] = []
+
+
+def tool(**kwargs):
+    """Register a tool on both servers."""
+
+    def register(fn):
+        _TOOLS.append((fn, kwargs))
+        server.tool(**kwargs)(fn)
+        plain_server.tool(**kwargs)(fn)
+        return fn
+
+    return register
+
 
 _client: GoogleClient | None = None
 
@@ -93,7 +123,7 @@ async def place(value: str, cache: dict) -> str:
     return await saved.resolve(STORE, user.id if user else None, value, cache)
 
 
-@server.tool(title="When should I leave?", annotations=read_only("When should I leave?"))
+@tool(title="When should I leave?", annotations=read_only("When should I leave?"))
 async def when_to_leave(
     origin: Annotated[str, Field(description="Where the trip starts. " + PLACE_HINT)],
     destination: Annotated[str, Field(description="Where the user needs to be. " + PLACE_HINT)],
@@ -124,7 +154,7 @@ async def when_to_leave(
     return await tools.when_to_leave(client(), origin, destination, arrive_by, mode, buffer_minutes)
 
 
-@server.tool(title="Compare ways to get there", annotations=read_only("Compare ways to get there"))
+@tool(title="Compare ways to get there", annotations=read_only("Compare ways to get there"))
 async def compare_ways_to_get_there(
     origin: Annotated[str, Field(description="Where the trip starts. " + PLACE_HINT)],
     destination: Annotated[str, Field(description="Where they're going. " + PLACE_HINT)],
@@ -147,7 +177,7 @@ async def compare_ways_to_get_there(
     return await tools.compare_ways_to_get_there(client(), origin, destination, depart_at, modes)
 
 
-@server.tool(title="Weather along the way", annotations=read_only("Weather along the way"))
+@tool(title="Weather along the way", annotations=read_only("Weather along the way"))
 async def weather_along_the_way(
     origin: Annotated[str, Field(description="Where the trip starts. " + PLACE_HINT)],
     destination: Annotated[str, Field(description="Where they're going. " + PLACE_HINT)],
@@ -167,7 +197,7 @@ async def weather_along_the_way(
     return await tools.weather_along_the_way(client(), origin, destination, time, units)
 
 
-@server.tool(title="Plan my day", annotations=read_only("Plan my day"))
+@tool(title="Plan my day", annotations=read_only("Plan my day"))
 async def plan_my_day(
     start: Annotated[str, Field(description="Where the day starts, e.g. their apartment. " + PLACE_HINT)],
     stops: Annotated[
@@ -225,20 +255,7 @@ def baton_principal(ctx: PrincipalResolutionContext) -> Principal | None:
     return Principal(principal_id=user.id, display_name=user.email, labels=["baton"])
 
 
-install_baton(server, VendorConfig(dsn='https://baton_pk_xwxh7s4VN4p4h4SXQYuklPUxKFg-ytLwq3LvICMSdk8@baton.goodtiming.ai/ten_fccdd4c5/srv-1a894d69', report_mode='on', resolve_principal=baton_principal))
-
-# Claude's connector directory requires a title and behavior hints on every tool,
-# including the report tool Baton adds (baton-sdk 0.9.7 sets neither).
-# Remove once baton-sdk sets them itself; until then this only fills what's missing.
-for _tool in server._tool_manager._tools.values():
-    if _tool.name.endswith("_annotate"):
-        _tool.title = _tool.title or "Report a problem"
-        _tool.annotations = _tool.annotations or ToolAnnotations(
-            title=_tool.title, readOnlyHint=False, destructiveHint=False, openWorldHint=True
-        )
-
-
-@server.tool(title="Train and bus options", annotations=read_only("Train and bus options"))
+@tool(title="Train and bus options", annotations=read_only("Train and bus options"))
 async def transit_options(
     origin: Annotated[str, Field(description="Where the trip starts. " + PLACE_HINT)],
     destination: Annotated[str, Field(description="Where they're going. " + PLACE_HINT)],
@@ -273,7 +290,7 @@ def _signed_in() -> auth.User:
 
 if SAVED_PLACES:
 
-    @server.tool(
+    @tool(
         title="Save a place",
         annotations=ToolAnnotations(
             title="Save a place", readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=True
@@ -290,7 +307,7 @@ if SAVED_PLACES:
         log.info("tool=save_place")
         return await saved.save_place(STORE, client(), _signed_in().id, name, address)
 
-    @server.tool(
+    @tool(
         title="My saved places",
         annotations=ToolAnnotations(
             title="My saved places", readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False
@@ -301,7 +318,7 @@ if SAVED_PLACES:
         log.info("tool=my_places")
         return await saved.my_places(STORE, _signed_in().id)
 
-    @server.tool(
+    @tool(
         title="Forget a saved place",
         annotations=ToolAnnotations(
             title="Forget a saved place", readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=False
@@ -315,9 +332,83 @@ if SAVED_PLACES:
         return await saved.forget_place(STORE, _signed_in().id, name)
 
 
+install_baton(
+    server,
+    VendorConfig(
+        dsn='https://baton_pk_xwxh7s4VN4p4h4SXQYuklPUxKFg-ytLwq3LvICMSdk8@baton.goodtiming.ai/ten_fccdd4c5/srv-1a894d69',
+        report_mode='on',
+        # A named user may still hold a tool list from before they signed in, without
+        # user_goal, so it can't be required there.
+        intent_param_mode='optional' if BATON_MODE == "named" else 'required',
+        resolve_principal=baton_principal,
+    ),
+)
+
+# Claude's connector directory requires a title and behavior hints on every tool,
+# including the report tool Baton adds (baton-sdk 1.3.0 still sets neither).
+# Remove once baton-sdk sets them itself; until then this only fills what's missing.
+for _tool in server._tool_manager._tools.values():
+    if _tool.name.endswith("_annotate"):
+        _tool.title = _tool.title or "Report a problem"
+        _tool.annotations = _tool.annotations or ToolAnnotations(
+            title=_tool.title, readOnlyHint=False, destructiveHint=False, openWorldHint=True
+        )
+
+
 @server.custom_route("/health", methods=["GET"])
+@plain_server.custom_route("/health", methods=["GET"])
 async def health(_: Request) -> JSONResponse:
     return JSONResponse({"ok": True})
+
+
+def gets_baton(user: auth.User | None) -> bool:
+    if BATON_MODE == "everyone":
+        return True
+    return bool(user and user.email and user.email.lower() in BATON_USERS)
+
+
+class BatonRouter:
+    """Sends each request to the Baton server or the plain one (see BATON_MODE).
+
+    Runs inside AuthMiddleware, so the signed-in user is already known. Starts
+    both servers' session managers on startup.
+    """
+
+    def __init__(self, baton_app, plain_app):
+        self.baton_app = baton_app
+        self.plain_app = plain_app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "lifespan":
+            return await self._lifespan(receive, send)
+        app = self.baton_app if gets_baton(auth.current_user()) else self.plain_app
+        await app(scope, receive, send)
+
+    async def _lifespan(self, receive, send):
+        import contextlib
+
+        async with contextlib.AsyncExitStack() as stack:
+            msg = await receive()
+            if msg["type"] == "lifespan.startup":
+                await stack.enter_async_context(server.session_manager.run())
+                if BATON_MODE == "named":
+                    await stack.enter_async_context(plain_server.session_manager.run())
+                await send({"type": "lifespan.startup.complete"})
+            msg = await receive()
+        if msg["type"] == "lifespan.shutdown":
+            await send({"type": "lifespan.shutdown.complete"})
+
+
+def build_app(host: str = "0.0.0.0"):
+    """The full ASGI app: rate limit → sign-in → Baton router → MCP."""
+    baton_app = server.streamable_http_app(stateless_http=True, json_response=True, host=host)
+    plain_app = (
+        plain_server.streamable_http_app(stateless_http=True, json_response=True, host=host)
+        if BATON_MODE == "named"
+        else baton_app
+    )
+    app = BatonRouter(baton_app, plain_app)
+    return auth.AuthMiddleware(app, AUTH if SAVED_PLACES else None)
 
 
 class RateLimit:
@@ -353,8 +444,8 @@ def main() -> None:
     client()  # fail fast if the key is missing
     host = os.environ.get("HOST", "0.0.0.0")
     port = int(os.environ.get("PORT", "8080"))
-    app = server.streamable_http_app(stateless_http=True, json_response=True, host=host)
-    app = auth.AuthMiddleware(app, AUTH if SAVED_PLACES else None)
+    log.info("BATON_MODE=%s", BATON_MODE)
+    app = build_app(host)
     app = RateLimit(app, per_minute=int(os.environ.get("RATE_LIMIT_PER_MINUTE", "60")))
     uvicorn.run(app, host=host, port=port, proxy_headers=True, forwarded_allow_ips="*")
 

@@ -234,3 +234,44 @@ async def test_lazy_signin_hides_metadata_until_a_saved_place_tool_is_called(fak
         # Once signed in, everything works as before.
         r = await post(http, call("save_place", {"name": "home", "address": "home"}), token=GOOD)
         assert not result_text(r)[0]
+
+
+# ---- Directory App (BATON_MODE=named) ----------------------------------------------
+
+
+def test_who_gets_baton(monkeypatch):
+    monkeypatch.setattr(server, "BATON_MODE", "everyone")
+    assert server.gets_baton(None)
+    monkeypatch.setattr(server, "BATON_MODE", "named")
+    assert not server.gets_baton(None)
+    assert not server.gets_baton(User("user_1", "someone@example.com"))
+    assert not server.gets_baton(User("user_3", None))
+    assert server.gets_baton(User("user_2", "TESTER@example.com"))
+
+
+async def test_directory_app_routes_only_named_users_to_baton(fake, monkeypatch):
+    monkeypatch.setattr(server, "BATON_MODE", "named")
+    app = server.build_app()
+    seen = []
+    router = app.app
+    for attr in ("baton_app", "plain_app"):
+        inner = getattr(router, attr)
+
+        async def spy(scope, receive, send, inner=inner, attr=attr):
+            seen.append(attr)
+            await inner(scope, receive, send)
+
+        setattr(router, attr, spy)
+    async with server.server.session_manager.run(), server.plain_server.session_manager.run():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as http:
+            trip = call("when_to_leave", {"origin": "2600 Durant Ave", "destination": "Dwinelle Hall", "arrive_by": "2026-11-04T09:00"})
+            for token in (None, GOOD, TESTER):
+                r = await post(http, trip, token=token)
+                assert r.status_code == 200 and not result_text(r)[0]
+    assert seen == ["plain_app", "plain_app", "baton_app"]
+
+
+def test_plain_server_has_the_same_tools_and_no_baton():
+    names = lambda s: sorted(t.name for t in s._tool_manager._tools.values())  # noqa: E731
+    assert names(server.plain_server) == [n for n in names(server.server) if not n.endswith("_annotate")]
+    assert "Baton" not in (server.plain_server.instructions or "")

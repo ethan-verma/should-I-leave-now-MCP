@@ -11,3 +11,30 @@ services:
         sync: false       # Render asks you for this in the dashboard; never commit it
       - key: RATE_LIMIT_PER_MINUTE
         value: "60"
+
+  # When Should I Leave (Directory App): the one submitted to Claude's and ChatGPT's
+  # directories. Baton is off for everyone except signed-in users on BATON_USERS.
+  # The service above is the Standard config (Baton on for everyone).
+  - type: web
+    name: should-i-leave-now-app
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: BATON_MODE
+        value: named
+      - key: PUBLIC_URL
+        value: https://should-i-leave-now-app.onrender.com/mcp
+      - key: RATE_LIMIT_PER_MINUTE
+        value: "60"
+      - key: GOOGLE_MAPS_API_KEY
+        sync: false
+      - key: AUTHKIT_DOMAIN
+        sync: false
+      - key: WORKOS_API_KEY
+        sync: false
+      - key: FIRESTORE_CREDENTIALS_JSON
+        sync: false
+      - key: BATON_USERS
+        sync: false
